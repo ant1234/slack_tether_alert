@@ -61,16 +61,16 @@ def find_lowest_value(prices):
         logging.error(f"Failed to find lowest value: {e}")
         raise
 
-# Function to fetch the total supply of Tether
-def fetch_tether_supply():
+# Function to fetch the circulating supply of Tether
+def fetch_tether_data():
     try:
         response = requests.get(f"{COINGECKO_API_URL}/coins/{CURRENCY_PAIR}")
         response.raise_for_status()
-        tether_supply = response.json()['market_data']['circulating_supply']
-        logging.debug(f"Tether supply fetched: {tether_supply}")
-        return tether_supply
+        circulating_supply = response.json()['market_data']['circulating_supply']
+        logging.debug(f"Tether circulating supply fetched: {circulating_supply}")
+        return circulating_supply
     except Exception as e:
-        logging.error(f"Failed to fetch tether supply: {e}")
+        logging.error(f"Failed to fetch tether data: {e}")
         raise
 
 # Function to send an alert to Slack
@@ -99,47 +99,38 @@ def main():
         historical_values = fetch_historical_values()
         lowest_value = find_lowest_value(historical_values)
         
-        # Fetch current supply and compare with previous supply
-        current_supply = fetch_tether_supply()
+        # Fetch current circulating supply of Tether
+        current_circulating_supply = fetch_tether_data()
         
-        # Read the previous supply from a file
-        previous_supply_file = 'previous_supply.txt'
-        if os.path.exists(previous_supply_file):
-            with open(previous_supply_file, 'r') as file:
-                previous_supply = float(file.read().strip())
-        else:
-            previous_supply = current_supply
-        
-        # Read the supply from three days ago
+        # Read the circulating supply from three days ago
         three_days_ago_file = 'three_days_ago_supply.txt'
         if os.path.exists(three_days_ago_file):
             with open(three_days_ago_file, 'r') as file:
                 three_days_ago_supply = float(file.read().strip())
         else:
-            three_days_ago_supply = current_supply
+            three_days_ago_supply = current_circulating_supply
         
-        if current_supply > previous_supply * 1.05:  # Assuming a 5% increase is significant
-            message = (f"Massive amount of Tether generated!\n"
-                       f"Previous Supply: {previous_supply}\n"
-                       f"Current Supply: {current_supply}\n"
-                       f"Increase: {current_supply - previous_supply} USDT")
-            send_slack_alert(SLACK_BOT_TOKEN, CHANNEL, message)
+        # Calculate the percentage change in circulating supply
+        supply_percentage_change = ((current_circulating_supply - three_days_ago_supply) / three_days_ago_supply) * 100
         
-        # Update the previous supply
-        with open(previous_supply_file, 'w') as file:
-            file.write(str(current_supply))
-        
-        # Update the supply from three days ago
-        three_days_ago_supply_percentage_change = ((current_supply - three_days_ago_supply) / three_days_ago_supply) * 100
+        # Update the circulating supply from three days ago
         with open(three_days_ago_file, 'w') as file:
-            file.write(str(current_supply))
+            file.write(str(current_circulating_supply))
+        
+        # Format circulating supply as number
+        formatted_circulating_supply = "{:,.0f}".format(current_circulating_supply)
         
         percentage_change = ((current_value - lowest_value) / lowest_value) * 100
         message = (f"Today's value of Tether is : {current_value:.2f} NZD. "
                    f"This is a {percentage_change:.2f}% {'increase' if percentage_change > 0 else 'decrease'} "
                    f"in value compared with the lowest value over the past month.\n"
-                   f"Current Tether supply is {current_supply} USDT, which is a {three_days_ago_supply_percentage_change:.2f}% "
-                   f"{'increase' if three_days_ago_supply_percentage_change >= 0 else 'decrease'} compared with three days ago.")
+                   f"Tether tokens in circulation: {formatted_circulating_supply} USDT, "
+                   f"which is a {supply_percentage_change:.2f}% "
+                   f"{'increase' if supply_percentage_change >= 0 else 'decrease'} compared with three days ago.")
+        
+        if supply_percentage_change > 5:
+            message += "\nAlert: The number of Tether tokens in circulation has increased by more than 5% in the last three days."
+        
         send_slack_alert(SLACK_BOT_TOKEN, CHANNEL, message)
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
