@@ -113,23 +113,28 @@ def main():
         # Calculate the percentage change in circulating supply
         supply_percentage_change = ((current_circulating_supply - three_days_ago_supply) / three_days_ago_supply) * 100
         
+        # Calculate the difference in dollar value
+        dollar_difference = (current_circulating_supply - three_days_ago_supply) * current_value
+        
         # Update the circulating supply from three days ago
         with open(three_days_ago_file, 'w') as file:
             file.write(str(current_circulating_supply))
         
         # Format circulating supply as number
         formatted_circulating_supply = "{:,.0f}".format(current_circulating_supply)
+        formatted_dollar_difference = "${:,.2f}".format(abs(dollar_difference))
         
         percentage_change = ((current_value - lowest_value) / lowest_value) * 100
         message = (f"Today's value of Tether is : {current_value:.2f} NZD. "
-                   f"This is a {percentage_change:.2f}% {'increase' if percentage_change > 0 else 'decrease'} "
+                   f"This is a {percentage_change:.2f}% {'increase' if percentage_change >= 0 else 'decrease'} "
                    f"in value compared with the lowest value over the past month.\n"
                    f"Tether tokens in circulation: {formatted_circulating_supply} USDT, "
                    f"which is a {supply_percentage_change:.2f}% "
-                   f"{'increase' if supply_percentage_change >= 0 else 'decrease'} compared with three days ago.")
+                   f"{'increase' if supply_percentage_change >= 0 else 'decrease'} compared with three days ago.\n"
+                   f"Tether {'printed' if dollar_difference >= 0 else 'burned'} {formatted_dollar_difference} yesterday.")
         
-        if supply_percentage_change > 5:
-            message += "\nAlert: The number of Tether tokens in circulation has increased by more than 5% in the last three days."
+        if supply_percentage_change > 1:
+            message += "\n:gem: The number of Tether tokens in circulation has increased by more than 1% in the last three days."
         
         send_slack_alert(SLACK_BOT_TOKEN, CHANNEL, message)
     except Exception as e:
