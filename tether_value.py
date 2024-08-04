@@ -17,6 +17,8 @@ SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 CHANNEL = "#general"
 CURRENCY_PAIR = "tether"
 COMPARE_CURRENCY = "nzd"
+FEAR_GREED_API_URL = "https://api.alternative.me/fng/"  # Example endpoint for Fear and Greed Index
+HISTORICAL_SUPPLY_FILE = 'historical_supply.txt'  # A file to store historical supply data for ranking
 
 # Function to fetch the current value of Tether against NZD
 def fetch_current_value():
@@ -73,6 +75,74 @@ def fetch_tether_data():
         logging.error(f"Failed to fetch tether data: {e}")
         raise
 
+# Function to fetch the Fear and Greed Index for Bitcoin
+def fetch_fear_greed_index():
+    try:
+        response = requests.get(FEAR_GREED_API_URL)
+        response.raise_for_status()
+        fear_greed_index = response.json()['data'][0]['value']
+        logging.debug(f"Fear and Greed Index fetched: {fear_greed_index}")
+        return fear_greed_index
+    except Exception as e:
+        logging.error(f"Failed to fetch Fear and Greed Index: {e}")
+        raise
+
+# Function to fetch historical supply data for ranking
+def fetch_historical_supply():
+    if not os.path.exists(HISTORICAL_SUPPLY_FILE):
+        # If the file doesn't exist, create it with some dummy data
+        historical_supply = {
+            "January": 49324574.36,
+            "February": 49324573.22,
+            "March": 49324577.36,
+            "April": 49324575.53,
+            "May": 49324578.32,
+            "June": 49324572.11,
+            "July": 49324576.33,
+            "August": 0.0  # Placeholder for current month's data
+        }
+        save_historical_supply(historical_supply)
+    else:
+        with open(HISTORICAL_SUPPLY_FILE, 'r') as file:
+            historical_supply = eval(file.read().strip())
+    return historical_supply
+
+# Function to save historical supply data
+def save_historical_supply(historical_supply):
+    with open(HISTORICAL_SUPPLY_FILE, 'w') as file:
+        file.write(str(historical_supply))
+
+# Function to calculate the rank of the current month
+def calculate_ranking(historical_supply, current_month, current_supply):
+    historical_supply[current_month] = current_supply
+    sorted_supply = sorted(historical_supply.items(), key=lambda item: item[1], reverse=True)
+    ranking = {month: rank+1 for rank, (month, _) in enumerate(sorted_supply)}
+    return ranking, sorted_supply
+
+# Function to generate the message for Slack
+def generate_message(current_value, percentage_change, current_circulating_supply, supply_percentage_change, dollar_difference, ranking, sorted_supply, fear_greed_index):
+    formatted_circulating_supply = "{:,.0f}".format(current_circulating_supply)
+    formatted_dollar_difference = "{:,.2f}".format(abs(dollar_difference))
+    
+    message = (
+        f"Tether is : {current_value:.2f} NZD. "
+        f"This is a {percentage_change:.2f}% {'increase' if percentage_change > 0 else 'decrease'} "
+        f"in value compared with the lowest value over the past month.\n\n"
+        f"Tether tokens in circulation: {formatted_circulating_supply} USDT, "
+        f"which is a {supply_percentage_change:.2f}% "
+        f"{'increase' if supply_percentage_change > 0 else 'decrease'} compared with the beginning of this month.\n\n"
+        f"Tether tokens generated so far this month: {formatted_dollar_difference}\n"
+        f"This ranks August {ranking['August']} place with the most tethers printed within the month:\n\n"
+    )
+    
+    for rank, (month, supply) in enumerate(sorted_supply, 1):
+        formatted_supply = "{:,.2f}".format(supply)
+        message += f"({rank}th place) {month} : {formatted_supply}\n"
+    
+    message += f"\nBitcoin's Fear and Greed Index is at {fear_greed_index}% - Indicating: {'Fear' if int(fear_greed_index) < 50 else 'Greed'} in the market"
+    
+    return message
+
 # Function to send an alert to Slack
 def send_slack_alert(token, channel, message):
     headers = {
@@ -102,39 +172,30 @@ def main():
         # Fetch current circulating supply of Tether
         current_circulating_supply = fetch_tether_data()
         
-        # Read the circulating supply from three days ago
-        three_days_ago_file = 'three_days_ago_supply.txt'
-        if os.path.exists(three_days_ago_file):
-            with open(three_days_ago_file, 'r') as file:
-                three_days_ago_supply = float(file.read().strip())
-        else:
-            three_days_ago_supply = current_circulating_supply
+        # Read the circulating supply from the beginning of the month
+        start_of_month_supply = fetch_historical_supply().get("August", current_circulating_supply)
         
         # Calculate the percentage change in circulating supply
-        supply_percentage_change = ((current_circulating_supply - three_days_ago_supply) / three_days_ago_supply) * 100
+        supply_percentage_change = ((current_circulating_supply - start_of_month_supply) / start_of_month_supply) * 100
         
         # Calculate the difference in dollar value
-        dollar_difference = (current_circulating_supply - three_days_ago_supply) * current_value
+        dollar_difference = (current_circulating_supply - start_of_month_supply) * current_value
         
-        # Update the circulating supply from three days ago
-        with open(three_days_ago_file, 'w') as file:
-            file.write(str(current_circulating_supply))
+        # Fetch the historical supply data
+        historical_supply = fetch_historical_supply()
         
-        # Format circulating supply as number
-        formatted_circulating_supply = "{:,.0f}".format(current_circulating_supply)
-        formatted_dollar_difference = "${:,.2f}".format(abs(dollar_difference))
+        # Calculate the ranking
+        current_month = datetime.now().strftime("%B")
+        ranking, sorted_supply = calculate_ranking(historical_supply, current_month, dollar_difference)
+        
+        # Save the updated historical supply data
+        save_historical_supply(historical_supply)
+        
+        # Fetch the Fear and Greed Index for Bitcoin
+        fear_greed_index = fetch_fear_greed_index()
         
         percentage_change = ((current_value - lowest_value) / lowest_value) * 100
-        message = (f"Today's value of Tether is : {current_value:.2f} NZD. "
-                   f"This is a {percentage_change:.2f}% {'increase' if percentage_change >= 0 else 'decrease'} "
-                   f"in value compared with the lowest value over the past month.\n"
-                   f"Tether tokens in circulation: {formatted_circulating_supply} USDT, "
-                   f"which is a {supply_percentage_change:.2f}% "
-                   f"{'increase' if supply_percentage_change >= 0 else 'decrease'} compared with three days ago.\n"
-                   f"Tether {'printed' if dollar_difference >= 0 else 'burned'} {formatted_dollar_difference} yesterday.")
-        
-        if supply_percentage_change > 1:
-            message += "\n:gem: The number of Tether tokens in circulation has increased by more than 1% in the last three days."
+        message = generate_message(current_value, percentage_change, current_circulating_supply, supply_percentage_change, dollar_difference, ranking, sorted_supply, fear_greed_index)
         
         send_slack_alert(SLACK_BOT_TOKEN, CHANNEL, message)
     except Exception as e:
