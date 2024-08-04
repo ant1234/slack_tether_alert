@@ -138,13 +138,20 @@ def calculate_generated_tokens(historical_data):
 # Function to determine the rankings of Tether tokens generated
 def rank_generated_tokens(generated_tokens):
     sorted_tokens = sorted(generated_tokens.items(), key=lambda x: x[1], reverse=True)
-    rank_message = "This ranks No.{} place with the most tethers printed within the month:\n".format(
-        sorted_tokens.index((datetime.now().strftime("%B"), generated_tokens[datetime.now().strftime("%B")])) + 1
+    rank_dict = {month: (i + 1) for i, (month, _) in enumerate(sorted_tokens)}
+
+    months_in_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    rank_message = "This ranks No.{} place with the most tethers printed within a single month:\n".format(
+        rank_dict[datetime.now().strftime("%B")]
     )
-    for i, (month, amount) in enumerate(sorted_tokens):
-        rank_message += "( No.{} place ) {} : {:.2f}B\n".format(i + 1, month, amount / 1e9)  # Format in billions
+    for month in months_in_order:
+        if month in generated_tokens:
+            amount = generated_tokens[month]
+            rank = rank_dict[month]
+            rank_message += "(No.{} place) {} : {:.2f}B\n".format(rank, month, amount / 1e9)  # Format in billions
     
     return rank_message
+
 
 # Function to send a message to Slack
 def send_slack_message(message):
