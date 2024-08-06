@@ -45,6 +45,19 @@ def fetch_current_value():
         logging.error(f"Failed to fetch current value: {e}")
         raise
 
+# Function to fetch the lowest value of Tether against NZD in the past month
+def fetch_lowest_value():
+    try:
+        response = requests.get(f"{COINGECKO_API_URL}/coins/{CURRENCY_PAIR}/market_chart?vs_currency={COMPARE_CURRENCY}&days=30")
+        response.raise_for_status()
+        prices = response.json()['prices']
+        lowest_value = min(price[1] for price in prices)
+        logging.debug(f"Lowest value in the past month fetched: {lowest_value} NZD")
+        return float(lowest_value)
+    except Exception as e:
+        logging.error(f"Failed to fetch lowest value: {e}")
+        raise
+
 # Function to fetch the circulating supply of Tether
 def fetch_tether_data():
     try:
@@ -52,7 +65,7 @@ def fetch_tether_data():
         response.raise_for_status()
         circulating_supply = response.json()['market_data']['circulating_supply']
         logging.debug(f"Tether circulating supply fetched: {circulating_supply}")
-        return int(round(circulating_supply))
+        return float(circulating_supply)
     except Exception as e:
         logging.error(f"Failed to fetch tether data: {e}")
         raise
@@ -109,12 +122,6 @@ def save_historical_supply(historical_supply):
         file.write(str(historical_supply))
     logging.debug(f"Updated historical supply data saved.")
 
-# Function to format values as billions (B)
-def format_value_as_billion(value):
-    if value >= 1e9:
-        return f"{value / 1e9:.2f}B"
-    return f"{value / 1e6:.2f}M"
-
 # Function to calculate the amount of Tether tokens generated for each month
 def calculate_generated_tokens(historical_data):
     generated_tokens = {}
@@ -140,20 +147,20 @@ def calculate_generated_tokens(historical_data):
 # Function to determine the rankings of Tether tokens generated
 def rank_generated_tokens(generated_tokens):
     sorted_tokens = sorted(generated_tokens.items(), key=lambda x: x[1], reverse=True)
-    rank_dict = {month: (i + 1) for i, (month, _) in enumerate(sorted_tokens)}
+    rank_mapping = {month: rank for rank, (month, _) in enumerate(sorted_tokens, start=1)}
+    sorted_months = sorted(generated_tokens.keys(), key=lambda x: datetime.strptime(x, '%B'))
 
-    months_in_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-    rank_message = "This ranks No.{} place with the most tethers printed within a single month:\n".format(
-        rank_dict[datetime.now().strftime("%B")]
+    rank_message = "This ranks {} place with the most tethers printed within the month:\n".format(
+        rank_mapping[datetime.now().strftime("%B")]
     )
-    for month in months_in_order:
-        if month in generated_tokens:
-            amount = generated_tokens[month]
-            rank = rank_dict[month]
-            rank_message += "(No.{} place) {} : {:.2f}B\n".format(rank, month, amount / 1e9)  # Format in billions
+
+    for month in sorted_months:
+        amount = generated_tokens[month]
+        rank = rank_mapping[month]
+        formatted_amount = f"{amount / 1e9:.2f}B" if amount >= 1e9 else f"{amount / 1e6:.2f}M"
+        rank_message += "( No.{} place ) {} : {}\n".format(rank, month, formatted_amount)
     
     return rank_message
-
 
 # Function to send a message to Slack
 def send_slack_message(message):
@@ -173,10 +180,10 @@ def send_slack_message(message):
     except Exception as e:
         logging.error(f"Failed to send message to Slack: {e}")
 
-# Main function
 def main():
     try:
         current_value = fetch_current_value()
+        lowest_value = fetch_lowest_value()
         tether_supply = fetch_tether_data()
         bitcoin_value = fetch_bitcoin_value()
         fear_greed_index, value_classification = fetch_fear_greed_index()
@@ -185,19 +192,24 @@ def main():
         generated_tokens = calculate_generated_tokens(historical_data)
         rank_message = rank_generated_tokens(generated_tokens)
 
+        percentage_increase_value = ((current_value - lowest_value) / lowest_value) * 100
+        current_month = datetime.now().strftime("%B")
+        percentage_increase_supply = ((tether_supply - historical_data[current_month]) / historical_data[current_month]) * 100
+
         # Prepare the message
-        message = (f"Tether is : {current_value:.2f} NZD. This is a 3.43% increase in value compared with the lowest value over the past month.\n\n"
-                   f"Tether tokens in circulation: {tether_supply:.0f} USDT, which is a 0.05% increase compared with the beginning of this month.\n\n"
-                   f"Tether tokens generated so far this month : {generated_tokens[datetime.now().strftime('%B')]:,.2f}B\n"
+        message = (f"Tether is : {current_value:.2f} NZD. This is a {percentage_increase_value:.2f}% increase in value compared with the lowest value over the past month.\n\n"
+                   f"Tether tokens in circulation: {tether_supply:,.2f} USDT, which is a {percentage_increase_supply:.2f}% increase compared with the beginning of this month.\n\n"
+                   f"Tether tokens generated so far this month : {generated_tokens[current_month]:,.0f}\n"
                    f"{rank_message}\n"
                    f"Bitcoin's currency value is : ${bitcoin_value:,.2f} NZD\n\n"
                    f"Bitcoin's Fear and Greed Index is at {fear_greed_index}% - Indicating: {value_classification} in the market")
 
         send_slack_message(message)
 
-        # Update the historical supply file with the current month's data
-        historical_data[datetime.now().strftime("%B")] = round(tether_supply)
-        save_historical_supply(historical_data)
+        # Update the historical supply file only on the first of the month
+        if datetime.now().day == 1:
+            historical_data[current_month] = round(tether_supply)
+            save_historical_supply(historical_data)
 
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
