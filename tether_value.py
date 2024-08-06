@@ -74,9 +74,11 @@ def fetch_fear_greed_index():
     try:
         response = requests.get(FEAR_GREED_API_URL)
         response.raise_for_status()
-        fear_greed_index = response.json()['data'][0]['value']
-        logging.debug(f"Fear and Greed Index fetched: {fear_greed_index}")
-        return int(fear_greed_index)
+        fear_greed_data = response.json()['data'][0]
+        fear_greed_index = fear_greed_data['value']
+        value_classification = fear_greed_data['value_classification']
+        logging.debug(f"Fear and Greed Index fetched: {fear_greed_index} - {value_classification}")
+        return int(fear_greed_index), value_classification
     except Exception as e:
         logging.error(f"Failed to fetch Fear and Greed Index: {e}")
         raise
@@ -171,32 +173,32 @@ def send_slack_message(message):
     except Exception as e:
         logging.error(f"Failed to send message to Slack: {e}")
 
+# Main function
 def main():
     try:
         current_value = fetch_current_value()
         tether_supply = fetch_tether_data()
         bitcoin_value = fetch_bitcoin_value()
-        fear_greed_index = fetch_fear_greed_index()
-        
+        fear_greed_index, value_classification = fetch_fear_greed_index()
+
         historical_data = read_historical_supply()
         generated_tokens = calculate_generated_tokens(historical_data)
         rank_message = rank_generated_tokens(generated_tokens)
-        
+
         # Prepare the message
         message = (f"Tether is : {current_value:.2f} NZD. This is a 3.43% increase in value compared with the lowest value over the past month.\n\n"
-                   f"Tether tokens in circulation: {tether_supply:,.2f} USDT, which is a 0.05% increase compared with the beginning of this month.\n\n"
-                   f"Tether tokens generated so far this month : {generated_tokens[datetime.now().strftime('%B')]:,.2f}\n\n"
+                   f"Tether tokens in circulation: {tether_supply:.0f} USDT, which is a 0.05% increase compared with the beginning of this month.\n\n"
+                   f"Tether tokens generated so far this month : {generated_tokens[datetime.now().strftime('%B')]:,.2f}B\n"
                    f"{rank_message}\n"
                    f"Bitcoin's currency value is : ${bitcoin_value:,.2f} NZD\n\n"
-                   f"Bitcoin's Fear and Greed Index is at {fear_greed_index}% - Indicating: {'Fear' if fear_greed_index < 50 else 'Greed'} in the market")
+                   f"Bitcoin's Fear and Greed Index is at {fear_greed_index}% - Indicating: {value_classification} in the market")
 
         send_slack_message(message)
-        
-        # Update the historical supply file with the current month's data if today is the 1st
-        if datetime.now().day == 1:
-            historical_data[datetime.now().strftime("%B")] = tether_supply
-            save_historical_supply(historical_data)
-        
+
+        # Update the historical supply file with the current month's data
+        historical_data[datetime.now().strftime("%B")] = round(tether_supply)
+        save_historical_supply(historical_data)
+
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
 
