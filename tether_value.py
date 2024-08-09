@@ -3,6 +3,7 @@ import requests
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -96,6 +97,24 @@ def fetch_fear_greed_index():
         logging.error(f"Failed to fetch Fear and Greed Index: {e}")
         raise
 
+# Function to fetch the VIX from Yahoo Finance
+def fetch_vix_yahoo():
+    try:
+        url = "https://finance.yahoo.com/quote/%5EVIX/"
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        vix_span = soup.find('fin-streamer', {'data-symbol': '^VIX', 'data-field': 'regularMarketPrice'})
+        if vix_span:
+            vix_value = vix_span.text
+            logging.debug(f"VIX fetched: {vix_value}")
+            return float(vix_value)
+        else:
+            raise Exception("VIX value not found on Yahoo Finance")
+    except Exception as e:
+        logging.error(f"Failed to fetch VIX: {e}")
+        raise
+
 # Function to read historical supply data from the file
 def read_historical_supply():
     if os.path.exists(HISTORICAL_SUPPLY_FILE):
@@ -150,7 +169,7 @@ def rank_generated_tokens(generated_tokens):
     rank_mapping = {month: rank for rank, (month, _) in enumerate(sorted_tokens, start=1)}
     sorted_months = sorted(generated_tokens.keys(), key=lambda x: datetime.strptime(x, '%B'))
 
-    rank_message = "This ranks {} place with the most tethers printed within the month:\n".format(
+    rank_message = "This ranks {} place with the most tethers printed within the month:\n\n".format(
         rank_mapping[datetime.now().strftime("%B")]
     )
 
@@ -187,6 +206,7 @@ def main():
         tether_supply = fetch_tether_data()
         bitcoin_value = fetch_bitcoin_value()
         fear_greed_index, value_classification = fetch_fear_greed_index()
+        vix_value = fetch_vix_yahoo()
 
         historical_data = read_historical_supply()
         generated_tokens = calculate_generated_tokens(historical_data)
@@ -197,22 +217,21 @@ def main():
         percentage_increase_supply = ((tether_supply - historical_data[current_month]) / historical_data[current_month]) * 100
 
         # Prepare the message
+        # Prepare the message
         message = (f"Tether is : {current_value:.2f} NZD. This is a {percentage_increase_value:.2f}% increase in value compared with the lowest value over the past month.\n\n"
                    f"Tether tokens in circulation: {tether_supply:,.2f} USDT, which is a {percentage_increase_supply:.2f}% increase compared with the beginning of this month.\n\n"
-                   f"Tether tokens generated so far this month : {generated_tokens[current_month]:,.0f}\n"
+                   f"Tether tokens generated so far this month : {generated_tokens[current_month]:,.0f}\n\n"
                    f"{rank_message}\n"
                    f"Bitcoin's currency value is : ${bitcoin_value:,.2f} NZD\n\n"
-                   f"Bitcoin's Fear and Greed Index is at {fear_greed_index}% - Indicating: {value_classification} in the market")
+                   f"Bitcoin's Fear and Greed Index is at {fear_greed_index}% - Indicating: {value_classification} in the market\n\n"
+                   f"The Stock Market VIX is : {vix_value}")
 
         send_slack_message(message)
 
-        # Update the historical supply file only on the first of the month
-        if datetime.now().day == 1:
-            historical_data[current_month] = round(tether_supply)
-            save_historical_supply(historical_data)
-
+        # Save the historical data
+        save_historical_supply(historical_data)
     except Exception as e:
-        logging.error(f"Error in main execution: {e}")
+        logging.error(f"An error occurred in the main process: {e}")
 
 if __name__ == "__main__":
     main()
