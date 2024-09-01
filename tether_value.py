@@ -209,14 +209,23 @@ def main():
         vix_value = fetch_vix_yahoo()
 
         historical_data = read_historical_supply()
+
+        # Update historical data if today is the 1st of the month
+        today = datetime.now()
+        current_month = today.strftime("%B")
+
+        if today.day == 1:
+            logging.debug(f"Updating historical data for {current_month}.")
+            historical_data[current_month] = round(tether_supply)
+            save_historical_supply(historical_data)
+            logging.debug(f"Historical supply data updated with {current_month}: {tether_supply}")
+
         generated_tokens = calculate_generated_tokens(historical_data)
         rank_message = rank_generated_tokens(generated_tokens)
 
         percentage_increase_value = ((current_value - lowest_value) / lowest_value) * 100
-        current_month = datetime.now().strftime("%B")
         percentage_increase_supply = ((tether_supply - historical_data[current_month]) / historical_data[current_month]) * 100
 
-        # Prepare the message
         # Prepare the message
         message = (f"Tether is : {current_value:.2f} NZD. This is a {percentage_increase_value:.2f}% increase in value compared with the lowest value over the past month.\n\n"
                    f"Tether tokens in circulation: {tether_supply:,.2f} USDT, which is a {percentage_increase_supply:.2f}% increase compared with the beginning of this month.\n\n"
@@ -232,6 +241,7 @@ def main():
         save_historical_supply(historical_data)
     except Exception as e:
         logging.error(f"An error occurred in the main process: {e}")
+
 
 if __name__ == "__main__":
     main()
